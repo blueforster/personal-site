@@ -1,0 +1,16 @@
+name: Scheduled Publish
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'  # Every 5 minutes
+  workflow_dispatch: {}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger scheduled publish
+        run: |
+          curl -X POST "${{ secrets.SITE_URL }}/api/schedule/trigger" \
+               -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+               -H "Content-Type: application/json"
