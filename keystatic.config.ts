@@ -12,13 +12,15 @@ const statusField = fields.select({
 })
 
 export default config({
-  storage: {
-    kind: 'github',
-    repo: {
-      owner: process.env.GITHUB_REPO_OWNER ?? '',
-      name: process.env.GITHUB_REPO_NAME ?? '',
-    },
-  },
+  storage: process.env.NODE_ENV === 'development'
+    ? { kind: 'local' }
+    : {
+        kind: 'github',
+        repo: {
+          owner: process.env.GITHUB_REPO_OWNER ?? '',
+          name: process.env.GITHUB_REPO_NAME ?? '',
+        },
+      },
   collections: {
     posts: collection({
       label: '文章',
