@@ -37,6 +37,8 @@ import {
   Loader2,
   FileDown,
   RefreshCw,
+  Send,
+  Clock,
 } from 'lucide-react'
 import { formatDate } from '@/lib/utils'
 
@@ -97,6 +99,14 @@ export default function ContentManager({ posts, courses, portfolio }: Props) {
   const [isDeleting, setIsDeleting] = useState(false)
   const [isRevalidating, setIsRevalidating] = useState(false)
   const [notification, setNotification] = useState<{ msg: string; ok: boolean } | null>(null)
+
+  // Publish dialog state
+  const [publishTarget, setPublishTarget] = useState<ContentItem | null>(null)
+  const [publishPlatforms, setPublishPlatforms] = useState<Set<string>>(new Set(['website']))
+  const [isScheduled, setIsScheduled] = useState(false)
+  const [scheduleAt, setScheduleAt] = useState('')
+  const [isPublishing, setIsPublishing] = useState(false)
+  const [publishResults, setPublishResults] = useState<{ platform: string; success: boolean; error?: string }[] | null>(null)
 
   const allByCollection: Record<string, ContentItem[]> = { posts, courses, portfolio }
 
@@ -261,6 +271,57 @@ export default function ContentManager({ posts, courses, portfolio }: Props) {
     startTransition(() => router.refresh())
   }
 
+  // ── Publish ──────────────────────────────────────────
+  function openPublishDialog(item: ContentItem) {
+    setPublishTarget(item)
+    setPublishPlatforms(new Set(['website']))
+    setIsScheduled(false)
+    setScheduleAt('')
+    setPublishResults(null)
+  }
+
+  function togglePlatform(platform: string) {
+    setPublishPlatforms((prev) => {
+      const next = new Set(prev)
+      if (next.has(platform)) { next.delete(platform) } else { next.add(platform) }
+      return next
+    })
+  }
+
+  async function confirmPublish() {
+    if (!publishTarget) return
+    setIsPublishing(true)
+    setPublishResults(null)
+    const platforms = Array.from(publishPlatforms)
+
+    try {
+      if (isScheduled && scheduleAt) {
+        const res = await fetch('/api/schedule', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ postSlug: publishTarget.slug, platforms, scheduledAt: scheduleAt }),
+        })
+        if (!res.ok) throw new Error()
+        notify(`「${publishTarget.title}」已排程發布`)
+        setPublishTarget(null)
+      } else {
+        const res = await fetch('/api/publish', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ slug: publishTarget.slug, platforms, action: 'publish' }),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error)
+        setPublishResults(data.results ?? [])
+        startTransition(() => router.refresh())
+      }
+    } catch {
+      notify('發布失敗，請再試一次', false)
+    } finally {
+      setIsPublishing(false)
+    }
+  }
+
   // ── Export (single) ──────────────────────────────────
   function exportItem(item: ContentItem) {
     const url = `/api/admin/export?collection=${item.collection}&slug=${item.slug}`
@@ -379,6 +440,16 @@ export default function ContentManager({ posts, courses, portfolio }: Props) {
                         >
                           <Pencil className="h-4 w-4" />
                         </Button>
+                        {item.collection === 'posts' && (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            title="發布到平台"
+                            onClick={() => openPublishDialog(item)}
+                          >
+                            <Send className="h-4 w-4" />
+                          </Button>
+                        )}
                         <Button
                           size="icon"
                           variant="ghost"
@@ -687,6 +758,98 @@ export default function ContentManager({ posts, courses, portfolio }: Props) {
               )}
               確認刪除
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Publish Dialog */}
+      <Dialog open={!!publishTarget} onOpenChange={(o) => !o && setPublishTarget(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>發布「{publishTarget?.title}」</DialogTitle>
+            <DialogDescription>選擇要發布的平台</DialogDescription>
+          </DialogHeader>
+
+          {publishResults ? (
+            <div className="space-y-2 py-2">
+              {publishResults.map((r) => (
+                <div key={r.platform} className="flex items-center gap-2 text-sm">
+                  {r.success ? (
+                    <Check className="h-4 w-4 text-emerald-500" />
+                  ) : (
+                    <span className="h-4 w-4 text-destructive">✕</span>
+                  )}
+                  <span className="capitalize font-medium">{r.platform}</span>
+                  {!r.success && r.error && (
+                    <span className="text-xs text-muted-foreground truncate">{r.error}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="space-y-4 py-2">
+              {/* Platform checkboxes */}
+              <div className="space-y-2">
+                {[
+                  { id: 'website', label: '網站（重新產生頁面）' },
+                  { id: 'facebook', label: 'Facebook' },
+                  { id: 'instagram', label: 'Instagram' },
+                  { id: 'threads', label: 'Threads' },
+                  { id: 'substack', label: 'Substack' },
+                ].map(({ id, label }) => (
+                  <label key={id} className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={publishPlatforms.has(id)}
+                      onChange={() => togglePlatform(id)}
+                      className="h-4 w-4 rounded border-muted-foreground accent-primary"
+                    />
+                    <span className="text-sm">{label}</span>
+                  </label>
+                ))}
+              </div>
+
+              {/* Schedule toggle */}
+              <div className="border-t pt-3">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={isScheduled}
+                    onChange={(e) => setIsScheduled(e.target.checked)}
+                    className="h-4 w-4 rounded border-muted-foreground accent-primary"
+                  />
+                  <Clock className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm">排程發布</span>
+                </label>
+                {isScheduled && (
+                  <input
+                    type="datetime-local"
+                    value={scheduleAt}
+                    onChange={(e) => setScheduleAt(e.target.value)}
+                    className="mt-2 w-full rounded-md border bg-background px-3 py-1.5 text-sm"
+                  />
+                )}
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPublishTarget(null)}>
+              {publishResults ? '關閉' : '取消'}
+            </Button>
+            {!publishResults && (
+              <Button
+                onClick={confirmPublish}
+                disabled={isPublishing || publishPlatforms.size === 0 || (isScheduled && !scheduleAt)}
+              >
+                {isPublishing ? (
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Send className="mr-1.5 h-3.5 w-3.5" />
+                )}
+                {isScheduled ? '建立排程' : '立即發布'}
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
